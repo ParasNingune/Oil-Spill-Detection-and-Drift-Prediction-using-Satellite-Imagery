@@ -1,12 +1,5 @@
-# torch 
-# torchvision 
-# torchaudio
-# sentinelhub
-# python-dotenv
-# opencv-python-headless
-# scikit-image
-# numpy
-# matplotlib
-
-geemap
-geedim
+opencv-python
+pandas
+numpy
+ipykernel
+rasterio
