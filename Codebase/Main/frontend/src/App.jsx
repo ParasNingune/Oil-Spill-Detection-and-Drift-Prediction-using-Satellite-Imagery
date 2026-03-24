@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import './App.css';
 import { MapContainer, TileLayer, Rectangle, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { jsPDF } from 'jspdf';
 import 'leaflet/dist/leaflet.css';
 
 // Fix default marker icons
@@ -199,6 +200,167 @@ function App() {
     closeImageModal();
   };
 
+  const getConfidenceInfo = (confidence) => {
+    const percentage = (confidence || 0) * 100;
+
+    if (percentage >= 90) {
+      return {
+        label: 'High Confidence',
+        description: 'Prediction is very reliable.',
+        badgeClass: 'bg-green-500/20 text-green-300 border-green-500/30'
+      };
+    }
+
+    if (percentage >= 70) {
+      return {
+        label: 'Medium Confidence',
+        description: 'Prediction is likely correct but should be reviewed.',
+        badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+      };
+    }
+
+    return {
+      label: 'Low Confidence',
+      description: 'Prediction is uncertain. Consider re-checking with another image.',
+      badgeClass: 'bg-red-500/20 text-red-300 border-red-500/30'
+    };
+  };
+
+  const downloadBase64Image = (base64Data, fileName) => {
+    if (!base64Data) return;
+
+    const link = document.createElement('a');
+    link.href = `data:image/png;base64,${base64Data}`;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const getImageDimensions = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.width, height: img.height });
+    img.onerror = () => resolve({ width: 800, height: 600 });
+    img.src = dataUrl;
+  });
+
+  const getStaticMapDataUrl = async () => {
+    if (!boundingBox) return null;
+
+    try {
+      const centerLat = ((boundingBox.y_min + boundingBox.y_max) / 2).toFixed(6);
+      const centerLon = ((boundingBox.x_min + boundingBox.x_max) / 2).toFixed(6);
+      const mapUrl = `https://staticmap.openstreetmap.de/staticmap.php?center=${centerLat},${centerLon}&zoom=8&size=900x450&markers=${centerLat},${centerLon},lightblue1`;
+
+      const response = await fetch(mapUrl);
+      if (!response.ok) return null;
+
+      const blob = await response.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  const addImagePage = async (pdf, title, base64Data) => {
+    if (!base64Data) return;
+
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 10;
+    const dataUrl = `data:image/png;base64,${base64Data}`;
+    const dimensions = await getImageDimensions(dataUrl);
+    const maxWidth = pageWidth - margin * 2;
+    const maxHeight = pageHeight - 35;
+
+    let renderWidth = maxWidth;
+    let renderHeight = (dimensions.height / dimensions.width) * renderWidth;
+
+    if (renderHeight > maxHeight) {
+      renderHeight = maxHeight;
+      renderWidth = (dimensions.width / dimensions.height) * renderHeight;
+    }
+
+    const x = (pageWidth - renderWidth) / 2;
+    const y = 20;
+
+    pdf.addPage();
+    pdf.setFontSize(14);
+    pdf.setTextColor(20, 30, 60);
+    pdf.text(title, margin, 14);
+    pdf.addImage(dataUrl, 'PNG', x, y, renderWidth, renderHeight);
+  };
+
+  const downloadAllExports = async () => {
+    if (!result || !result.mask_image || !result.overlay_image) return;
+
+    try {
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const margin = 12;
+      let y = 14;
+
+      pdf.setFontSize(18);
+      pdf.setTextColor(20, 30, 60);
+      pdf.text('SAR Oil Spill Detection Report', margin, y);
+      y += 8;
+
+      pdf.setFontSize(10);
+      pdf.setTextColor(80, 80, 80);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, y);
+      y += 8;
+
+      pdf.setFontSize(12);
+      pdf.setTextColor(30, 30, 30);
+      pdf.text(`Detection Result: ${result.has_oil ? 'Oil Detected' : 'No Oil Detected'}`, margin, y);
+      y += 6;
+      pdf.text(`Confidence: ${(result.confidence * 100).toFixed(1)}% (${confidenceInfo?.label || 'N/A'})`, margin, y);
+      y += 6;
+      pdf.text(`Affected Area: ${result.area_km2 > 0 ? `${result.area_km2} km²` : 'N/A'} | Pixels: ${result.area_pixels || 0}`, margin, y);
+      y += 6;
+      pdf.text(`Drift: ${result.drift_prediction?.direction || 0}° | 24h Distance: ${result.drift_prediction?.distance_km || 0} km`, margin, y);
+      y += 8;
+
+      if (boundingBox) {
+        pdf.setFontSize(11);
+        pdf.setTextColor(25, 25, 25);
+        pdf.text('Bounding Box Coordinates', margin, y);
+        y += 6;
+        pdf.setFontSize(10);
+        pdf.text(`West (Lon Min): ${boundingBox.x_min.toFixed(6)}`, margin, y);
+        pdf.text(`East (Lon Max): ${boundingBox.x_max.toFixed(6)}`, 110, y);
+        y += 5;
+        pdf.text(`South (Lat Min): ${boundingBox.y_min.toFixed(6)}`, margin, y);
+        pdf.text(`North (Lat Max): ${boundingBox.y_max.toFixed(6)}`, 110, y);
+        y += 8;
+
+        const mapDataUrl = await getStaticMapDataUrl();
+        if (mapDataUrl) {
+          pdf.setFontSize(11);
+          pdf.text('Map View', margin, y);
+          y += 3;
+          pdf.addImage(mapDataUrl, 'PNG', margin, y, 186, 90);
+          y += 96;
+        }
+      }
+
+      const previewToAdd = result.preview_image || serverPreview;
+      if (previewToAdd) {
+        await addImagePage(pdf, 'SAR Preview Image', previewToAdd);
+      }
+      await addImagePage(pdf, 'Detection Mask', result.mask_image);
+      await addImagePage(pdf, 'Combined Overlay', result.overlay_image);
+
+      pdf.save(`sar_detection_report_${Date.now()}.pdf`);
+    } catch {
+      setError('Failed to generate PDF report. Please try again.');
+    }
+  };
+
   // Add keyboard support for ESC key to close modal
   useEffect(() => {
     const handleEscKey = (e) => {
@@ -219,6 +381,15 @@ function App() {
       }, 100);
     }
   }, [showMapModal]);
+
+  // Scroll to top after analysis result is shown
+  useEffect(() => {
+    if (result) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [result]);
+
+  const confidenceInfo = result ? getConfidenceInfo(result.confidence) : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 py-8 px-4">
@@ -534,16 +705,16 @@ function App() {
                   <div className="bg-gradient-to-r from-white/5 to-white/10 border border-white/20 rounded-2xl p-5 backdrop-blur-sm">
                     <div className="flex items-center justify-center gap-8 text-sm flex-wrap">
                       <div className="flex items-center gap-3">
+                        <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg shadow-lg"></div>
+                        <span className="text-gray-200 font-medium">SAR Bands (VV/VH)</span>
+                      </div>
+                      <div className="flex items-center gap-3">
                         <div className="w-6 h-6 bg-gradient-to-br from-red-500 to-red-700 rounded-lg shadow-lg"></div>
                         <span className="text-gray-200 font-medium">Oil Spill Areas</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="w-6 h-6 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-lg shadow-lg"></div>
                         <span className="text-gray-200 font-medium">Detection Boundaries</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg shadow-lg"></div>
-                        <span className="text-gray-200 font-medium">SAR Bands (VV/VH)</span>
                       </div>
                     </div>
                   </div>
@@ -589,6 +760,34 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {/* Detection Summary */}
+              <div className="relative bg-gradient-to-r from-white/10 to-white/5 border border-white/20 rounded-2xl p-5 backdrop-blur-sm overflow-hidden animate-fadeIn">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-cyan-500"></div>
+                <div className="flex flex-wrap gap-2 md:justify-end">
+                    <button
+                      onClick={() => downloadBase64Image(result.mask_image, 'oil_mask.png')}
+                      disabled={!result.mask_image}
+                      className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Download Mask
+                    </button>
+                    <button
+                      onClick={() => downloadBase64Image(result.overlay_image, 'oil_overlay.png')}
+                      disabled={!result.overlay_image}
+                      className="px-4 py-2 rounded-lg text-sm font-semibold bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 hover:bg-yellow-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Download Overlay
+                    </button>
+                    <button
+                      onClick={downloadAllExports}
+                      disabled={!result.mask_image || !result.overlay_image}
+                      className="px-4 py-2 rounded-lg text-sm font-semibold bg-green-500/20 text-green-300 border border-green-500/40 hover:bg-green-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Download Report PDF
+                    </button>
+                </div>
+              </div>
 
               {/* Main Status Card */}
               <div className={`relative p-6 rounded-2xl border-2 overflow-hidden animate-fadeIn ${
@@ -636,6 +835,11 @@ function App() {
                       <span className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
                         {(result.confidence * 100).toFixed(1)}%
                       </span>
+                      <div className="mt-1">
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold border ${confidenceInfo?.badgeClass}`}>
+                          {confidenceInfo?.label}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <div className="relative h-5 bg-gray-800/50 rounded-full overflow-hidden border border-white/10">
@@ -655,6 +859,7 @@ function App() {
                     <span>50%</span>
                     <span>100%</span>
                   </div>
+                  <p className="mt-3 text-sm text-gray-300">{confidenceInfo?.description}</p>
                 </div>
               </div>
 

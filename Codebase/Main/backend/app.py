@@ -26,32 +26,52 @@ except Exception as e:
 
 # Model parameters
 IMG_SIZE = (512, 512)
-CLASSIFICATION_THRESHOLD = 0.5    # Adjust based on your model's performance
+CLASSIFICATION_THRESHOLD = 0.4    # Adjust based on your model's performance
 
 # ============================================================================
 
 
 def detect_image_format(file_bytes):
     """
-    Detect image format (TIFF, PNG, JPEG, etc.)
+    Detect image format (TIF, PNG, JPEG, etc.)
     Returns: format string ('tiff', 'png', 'jpeg')
     """
-    try:
-        # Check if it's a TIFF by trying to open with rasterio
-        with rasterio.open(io.BytesIO(file_bytes)) as src:
-            return 'tiff'
-    except Exception:
-        pass
-    
-    # Try PIL for PNG/JPEG
+    header = file_bytes[:16]
+
+    # Quick signature checks (most reliable and fast)
+    if header.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'png'
+    if header[:3] == b'\xff\xd8\xff':
+        return 'jpeg'
+    if header.startswith(b'II*\x00') or header.startswith(b'MM\x00*'):
+        return 'tiff'
+
+    # PIL format detection
     try:
         img = Image.open(io.BytesIO(file_bytes))
-        fmt = img.format.lower() if img.format else 'unknown'
-        if fmt in ['png', 'jpeg', 'jpg']:
-            return fmt if fmt != 'jpg' else 'jpeg'
+        fmt = (img.format or '').lower()
+        if fmt in ['png', 'jpeg', 'jpg', 'tif', 'tiff']:
+            if fmt in ['jpg', 'jpeg']:
+                return 'jpeg'
+            if fmt in ['tif', 'tiff']:
+                return 'tiff'
+            return 'png'
     except Exception:
         pass
-    
+
+    # Rasterio fallback (check driver, not just open success)
+    try:
+        with rasterio.open(io.BytesIO(file_bytes)) as src:
+            driver = (src.driver or '').lower()
+            if 'tiff' in driver or driver == 'gtiff' or driver == 'cog':
+                return 'tiff'
+            if driver == 'png':
+                return 'png'
+            if 'jpeg' in driver or driver == 'jpg':
+                return 'jpeg'
+    except Exception:
+        pass
+
     raise ValueError("Unsupported image format. Please use TIFF, PNG, or JPEG.")
 
 
@@ -92,25 +112,41 @@ def preprocess_sar_image(file_bytes):
 def preprocess_standard_image(file_bytes):
     """
     Preprocess PNG/JPEG images
-    Converts to 2-channel format compatible with the SAR model
-    Returns image, None transform (no georeference), None CRS
+    Uses OpenCV logic:
+    1) Decode image
+    2) Resize to 256x256
+    3) Convert to grayscale
+    4) Create fake VV/VH channels
+    5) Resize to model input size
+    6) Add batch dimension
+
+    Returns batched_image, None transform (no georeference), None CRS
     """
     try:
-        # Open image with PIL
-        img_pil = Image.open(io.BytesIO(file_bytes)).convert('L')  # Convert to grayscale
-        img_array = np.array(img_pil, dtype=np.float32)
-        
-        # Normalize to 0-1 range
-        if img_array.max() > 1:
-            img_array = img_array / 255.0
-        
-        # Duplicate grayscale channel to create 2-channel image matching SAR format
-        img_2channel = np.stack([img_array, img_array], axis=-1)
-        
-        # Resize to model input size
-        img = tf.image.resize(img_2channel, IMG_SIZE, method="bilinear").numpy()
-        
-        return img, None, None
+        # Decode bytes to OpenCV image (BGR)
+        np_buffer = np.frombuffer(file_bytes, np.uint8)
+        img = cv2.imdecode(np_buffer, cv2.IMREAD_COLOR)
+
+        if img is None:
+            raise ValueError("Could not decode PNG/JPEG image")
+
+        # Resize (as requested)
+        img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+
+        # Convert RGB/BGR -> grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Fake 2 channels (VV/VH-like)
+        fake_vv = gray.astype(np.float32) / 255.0
+        fake_vh = gray.astype(np.float32) / 255.0
+
+        sar_like = np.stack([fake_vv, fake_vh], axis=-1)
+
+        # Match model training input size (prevents dense shape mismatch)
+        sar_like = tf.image.resize(sar_like, IMG_SIZE, method="bilinear").numpy()
+        sar_like = np.expand_dims(sar_like, axis=0)
+
+        return sar_like, None, None
     
     except Exception as e:
         raise ValueError(f"Error preprocessing PNG/JPEG image: {str(e)}")
@@ -468,20 +504,27 @@ def predict():
             pixel_area_km2 = None  # Standard images don't have pixel area info
         
         # Prepare for model prediction
-        img_batch = np.expand_dims(img, axis=0)
+        if img.ndim == 3:
+            img_batch = np.expand_dims(img, axis=0)
+        elif img.ndim == 4:
+            img_batch = img
+        else:
+            raise ValueError(f"Unexpected preprocessed image shape: {img.shape}")
         
         # ============================================================================
         # MODEL PREDICTION - This is where your model runs
         # ============================================================================
         prediction = model.predict(img_batch, verbose=0)
-        confidence = float(prediction[0][0])
-        has_oil = confidence > CLASSIFICATION_THRESHOLD
+        oil_probability = float(prediction[0][0])
+        has_oil = oil_probability > CLASSIFICATION_THRESHOLD
+        confidence = oil_probability if has_oil else (1.0 - oil_probability)
         # ============================================================================
         
         response = {
             'has_oil': bool(has_oil),
             'confidence': float(confidence),
-            'prediction_value': float(confidence),
+            'prediction_value': float(oil_probability),
+            'oil_probability': float(oil_probability),
             'bbox': bbox,
             'area_km2': 0.0,
             'area_pixels': 0,
