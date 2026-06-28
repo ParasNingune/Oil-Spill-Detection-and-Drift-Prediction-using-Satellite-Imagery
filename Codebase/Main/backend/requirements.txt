@@ -1,0 +1,13 @@
+flask
+flask_cors
+tensorflow
+numpy
+opencv-python
+rasterio
+pillow
+scipy
+copernicusmarine
+opendrift
+folium
+python-dotenv
+twilio

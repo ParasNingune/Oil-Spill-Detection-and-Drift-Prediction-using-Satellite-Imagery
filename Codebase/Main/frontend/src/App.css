@@ -3,10 +3,29 @@
 /* Ensure smooth scrolling */
 html {
   scroll-behavior: smooth;
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
 }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#root {
+  overflow-y: auto;
+  min-height: 100vh;
+}
+
+/* Main container scrolling */
+main, .main-content {
+  overflow-y: visible;
+  overflow-x: hidden;
 }
 
 /* Custom animations */
@@ -227,9 +246,23 @@ img {
   z-index: 50;
 }
 
-/* Prevent body scroll when modal is open */
-body:has(.fixed.inset-0) {
-  overflow: hidden;
+/* Ensure scroll is always active */
+body, html {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Make sure modals don't interfere with scrolling */
+.fixed.inset-0 {
+  position: fixed;
+  overflow: hidden; /* Prevent modal from scrolling internally */
+}
+
+/* Allow scroll on the modal's internal content */
+.fixed.inset-0.overflow-y-auto {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Cursor styles */
@@ -250,6 +283,7 @@ body:has(.fixed.inset-0) {
   background-color: #1e293b !important;
   width: 100% !important;
   height: 100% !important;
+  position: relative;
 }
 
 .leaflet-tile {
