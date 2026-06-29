@@ -1,0 +1,3 @@
+Download and place the unet model from the drive link in this folder before running the backend!!
+
+Link -> https://drive.google.com/drive/folders/1lorNzSms3zaNefiZVN8S7twQXjGIBM9v?usp=sharing
