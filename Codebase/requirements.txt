@@ -1,5 +1,27 @@
-opencv-python
-pandas
-numpy
-ipykernel
-rasterio
+# Core Machine Learning & Data Processing
+tensorflow>=2.15.0
+numpy>=1.23.5,<2.0.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+matplotlib>=3.7.0
+
+# Geospatial Data Processing
+rasterio>=1.3.0
+opencv-python>=4.7.0
+Pillow>=9.5.0
+
+# Backend Web Server & API
+flask>=3.0.0
+flask-cors>=4.0.0
+python-dotenv>=1.0.0
+
+# Experiment Tracking & Jupyter
+wandb>=0.15.0
+ipykernel>=6.20.0
+
+# Marine Drift Simulation (Optional / Advanced Features)
+folium>=0.14.0
+copernicusmarine>=1.0.0
+# Note: opendrift is typically installed via conda or requires local system-level libraries (GDAL, NetCDF4, Proj).
+# It can be installed via: pip install git+https://github.com/OpenDrift/opendrift.git
