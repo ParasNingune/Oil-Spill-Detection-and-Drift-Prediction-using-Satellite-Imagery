@@ -17,7 +17,13 @@ An end-to-end deep learning and meteorological simulation system designed to ide
 
 ##  System Architecture
 
-![System Architecture](./Main/System_Architecture.png)
+![System Architecture](/Codebase/Main/images/System_Architecture.png)
+
+---
+
+##  Sequence Diagram
+
+![System Architecture](/Codebase/Main/images/Sequence_Diagram.png)
 
 ---
 
